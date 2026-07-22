@@ -18,8 +18,9 @@
 
 #include <stddef.h>
 #include <string.h>
+#if !defined(ZENOH_TI_AM67A)
 #include <unistd.h>
-
+#endif
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "zenoh-pico/link/transport/lwip_socket.h"
