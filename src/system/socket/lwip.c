@@ -17,7 +17,7 @@
 #if defined(ZP_PLATFORM_SOCKET_LWIP)
 
 #if defined(ZP_PLATFORM_SOCKET_LINKS_ENABLED)
-#if !defined(ZENOH_TI_AM67A)
+#if !defined(ZENOH_TI_AM67A) && !defined(ZENOH_TI_AM64X)
 #include <unistd.h>
 #endif
 #include "lwip/sockets.h"

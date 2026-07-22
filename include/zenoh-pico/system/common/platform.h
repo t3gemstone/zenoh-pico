@@ -44,7 +44,7 @@
 #endif
 
 #if !defined(ZP_PLATFORM_SOCKET_LWIP) && \
-    (defined(ZENOH_FREERTOS_LWIP) || defined(ZENOH_RPI_PICO) || defined(ZENOH_TI_AM67A))
+    (defined(ZENOH_FREERTOS_LWIP) || defined(ZENOH_RPI_PICO) || defined(ZENOH_TI_AM67A) || defined(ZENOH_TI_AM64X))
 #define ZP_PLATFORM_SOCKET_LWIP 1
 #endif
 
@@ -93,6 +93,8 @@
 #include "zenoh-pico/system/platform/freertos/lwip.h"
 #elif defined(ZENOH_TI_AM67A)
 #include "zenoh-pico/system/platform/freertos/ti_am67a.h"
+#elif defined(ZENOH_TI_AM64X)
+#include "zenoh-pico/system/platform/freertos/ti_am64x.h"
 #elif defined(ZENOH_RPI_PICO)
 #include "zenoh-pico/system/platform/rpi_pico.h"
 #elif defined(ZENOH_GENERIC)

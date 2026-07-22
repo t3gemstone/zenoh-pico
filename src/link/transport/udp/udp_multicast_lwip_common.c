@@ -29,7 +29,7 @@
 
 // strsep is not part of C99 and is absent on bare-metal toolchains such as
 // TI ARM Clang. Provide a local implementation under those conditions.
-#if defined(ZENOH_TI_AM67A)
+#if defined(ZENOH_TI_AM67A) || defined(ZENOH_TI_AM64X)
 static char *_zp_strsep(char **stringp, const char *delim) {
     char *start = *stringp;
     if (start == NULL) {

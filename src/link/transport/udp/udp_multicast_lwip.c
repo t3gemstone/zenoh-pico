@@ -15,7 +15,7 @@
 #include "zenoh-pico/config.h"
 #include "zenoh-pico/link/transport/udp_multicast.h"
 
-#if (defined(ZENOH_FREERTOS_LWIP) || defined(ZENOH_TI_AM67A)) && (Z_FEATURE_LINK_UDP_MULTICAST == 1)
+#if (defined(ZENOH_FREERTOS_LWIP) || defined(ZENOH_TI_AM67A) || defined(ZENOH_TI_AM64X)) && (Z_FEATURE_LINK_UDP_MULTICAST == 1)
 
 #include <string.h>
 
@@ -95,4 +95,4 @@ size_t _z_udp_multicast_write(const _z_sys_net_socket_t sock, const uint8_t *ptr
     return _z_lwip_udp_multicast_write(sock, ptr, len, rep);
 }
 
-#endif  /* (ZENOH_FREERTOS_LWIP || ZENOH_TI_AM67A) && Z_FEATURE_LINK_UDP_MULTICAST */
+#endif  /* (ZENOH_FREERTOS_LWIP || ZENOH_TI_AM67A || ZENOH_TI_AM64X) && Z_FEATURE_LINK_UDP_MULTICAST */

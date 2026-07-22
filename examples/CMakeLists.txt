@@ -43,6 +43,8 @@ endfunction()
 
 if(ZP_PLATFORM STREQUAL "ti_am67a")
     add_subdirectory(ti_am67a)
+elseif(ZP_PLATFORM STREQUAL "ti_am64x")
+    add_subdirectory(ti_am64x)
 elseif(UNIX)
     if(CMAKE_C_STANDARD MATCHES "99")
         add_example(z_put unix/c99/z_put.c)

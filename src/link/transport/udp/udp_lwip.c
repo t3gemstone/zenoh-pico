@@ -18,7 +18,7 @@
 
 #include <stddef.h>
 #include <string.h>
-#if !defined(ZENOH_TI_AM67A)
+#if !defined(ZENOH_TI_AM67A) && !defined(ZENOH_TI_AM64X)
 #include <unistd.h>
 #endif
 #include "lwip/netdb.h"
