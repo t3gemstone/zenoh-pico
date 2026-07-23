@@ -128,7 +128,7 @@ target_compile_definitions(z_pub PRIVATE
     RPMSG_NETIF_GW="192.168.100.2")
 ```
 
-**MTU**: The default VirtIO VRING buffer is 512 bytes → RPMsg payload max = 496 bytes → IP MTU = **478 bytes** (496 − 14 ETH_HLEN − 4 ETH_FCS). zenoh-pico's `Z_FEATURE_FRAGMENTATION=1` (already enabled) handles messages larger than the MTU transparently.
+**MTU**: The default VirtIO VRING buffer is 512 bytes -> RPMsg payload max = 496 bytes -> IP MTU = **478 bytes** (496 − 14 ETH_HLEN − 4 ETH_FCS). zenoh-pico's `Z_FEATURE_FRAGMENTATION=1` (already enabled) handles messages larger than the MTU transparently.
 
 ### Build — IPC mode
 
@@ -211,7 +211,7 @@ main()
               └── freertos_main():
                     Drivers_open()
                     Board_driversOpen()
-                    zenoh_net_init()   ← CPSW + lwIP + DHCP
+                    zenoh_net_init()   <- CPSW + lwIP + DHCP
                     z_open(session)
                     zp_start_read_task / zp_start_lease_task
                     └── application task(s)
@@ -226,13 +226,13 @@ main()
               └── freertos_main():
                     Drivers_open()
                     Board_driversOpen()
-                    zenoh_net_init()   ← RPMsg netif + static IP
-                      ├── tcpip_init → rpmsg_lwip_netif_init()
+                    zenoh_net_init()   <- RPMsg netif + static IP
+                      ├── tcpip_init -> rpmsg_lwip_netif_init()
                       │     ├── RPMessage_waitForLinuxReady()
                       │     ├── RPMessage_construct()
                       │     ├── RPMessage_announce("rpmsg-enet")
-                      │     └── xTaskCreateStatic(rpmsg_rx)  ← recv loop
-                      └── rpmsg_lwip_netif_wait_peer()  ← waits for first frame
+                      │     └── xTaskCreateStatic(rpmsg_rx)  <- recv loop
+                      └── rpmsg_lwip_netif_wait_peer()  <- waits for first frame
                     z_open(session)
                     zp_start_read_task / zp_start_lease_task
                     └── application task(s)
