@@ -10,6 +10,27 @@
 # Explicit override:
 #   cmake ... -DSYSCONFIG_CLI=/opt/ti/sysconfig_1.26.2/sysconfig_cli.sh
 
+# ---- IPC mode option --------------------------------------------------------
+#
+# -DZENOH_TI_AM67A_IPC=ON   : Use RPMsg IPC transport instead of CPSW Ethernet.
+#                              Ethernet frames travel over the VRING shared-memory
+#                              channel to the Linux A53 core.  No CPSW hardware or
+#                              UDMA is required.
+#
+# When ON:
+#   - examples link against lwip + lwip_contrib only (no enet_cpsw / lwipif_cpsw)
+#   - zenoh_net_init_rpmsg.c replaces zenoh_net_init.c
+#   - rpmsg_lwip_netif.c provides the custom lwIP netif
+#   - SysConfig is generated from example_ipc.syscfg (no CPSW, only IPC module)
+#
+# On Linux, load the rpmsg_net kernel module from tools/rpmsg_net/:
+#   sudo insmod rpmsg_net.ko
+#   sudo ip addr add 192.168.200.2/30 dev rpmsg0
+#   sudo ip link set rpmsg0 up
+#
+option(ZENOH_TI_AM67A_IPC
+    "Use RPMsg IPC transport instead of CPSW Ethernet on TI AM67A" OFF)
+
 # ---- SDK pre-built library targets ------------------------------------------
 set(_SDK_SRC "${MCU_PLUS_SDK_PATH}/source")
 
@@ -34,10 +55,18 @@ _import_sdk_lib(ti_am67a_sdk::lwip_contrib
     "${_SDK_SRC}/networking/lwip/lib/lwip-contrib-freertos.j722s.r5f.ti-arm-clang.release.lib")
 
 # ---- SysConfig setup --------------------------------------------------------
-set(_SYSCFG_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/syscfg")
-set(_SYSCFG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/example.syscfg")
+if(ZENOH_TI_AM67A_IPC)
+    set(_SYSCFG_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/syscfg_ipc")
+    set(_SYSCFG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/example_ipc.syscfg")
+else()
+    set(_SYSCFG_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/syscfg")
+    set(_SYSCFG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/example.syscfg")
+endif()
 
-# Canonical set of files SysConfig generates for this script/target
+# Canonical set of files SysConfig generates — identical for both IPC and CPSW modes.
+# In IPC mode the ti_enet_* files are generated as empty stubs (no includes, no code)
+# so they compile safely without enet headers and produce empty object files.
+# The IPC init code lives in ti_drivers_config.c (VRING memory, RPMessage resource table).
 set(_SYSCFG_ALL_SRCS
     "${_SYSCFG_DIR}/ti_enet_lwipif.c"
     "${_SYSCFG_DIR}/ti_enet_config.c"
@@ -86,24 +115,38 @@ if(SYSCONFIG_CLI AND EXISTS "${_SYSCFG_PRODUCT}")
     message(STATUS "SysConfig CLI : ${SYSCONFIG_CLI}")
     message(STATUS "SysConfig will generate files into ${_SYSCFG_DIR}")
 
-    set(_PATCH_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/patch_ti_enet_init.py")
-
-    add_custom_command(
-        OUTPUT  ${_SYSCFG_ALL_OUTPUTS}
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_SYSCFG_DIR}"
-        COMMAND "${SYSCONFIG_CLI}"
-                -s "${_SYSCFG_PRODUCT}"
-                -o "${_SYSCFG_DIR}"
-                "${_SYSCFG_SCRIPT}"
-        # Patch the generated ti_enet_init.c: const struct in static initializer
-        # is not valid C (tiarmclang enforces this). Move the assignment to runtime.
-        COMMAND ${CMAKE_COMMAND} -E env python3
-                "${_PATCH_SCRIPT}"
-                "${_SYSCFG_DIR}/ti_enet_init.c"
-        DEPENDS "${_SYSCFG_SCRIPT}" "${_PATCH_SCRIPT}"
-        COMMENT "Running SysConfig CLI for ti_am67a examples"
-        VERBATIM
-    )
+    if(ZENOH_TI_AM67A_IPC)
+        # IPC mode: no CPSW, no patch needed
+        add_custom_command(
+            OUTPUT  ${_SYSCFG_ALL_OUTPUTS}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_SYSCFG_DIR}"
+            COMMAND "${SYSCONFIG_CLI}"
+                    -s "${_SYSCFG_PRODUCT}"
+                    -o "${_SYSCFG_DIR}"
+                    "${_SYSCFG_SCRIPT}"
+            DEPENDS "${_SYSCFG_SCRIPT}"
+            COMMENT "Running SysConfig CLI for ti_am67a IPC examples"
+            VERBATIM
+        )
+    else()
+        set(_PATCH_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/patch_ti_enet_init.py")
+        add_custom_command(
+            OUTPUT  ${_SYSCFG_ALL_OUTPUTS}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_SYSCFG_DIR}"
+            COMMAND "${SYSCONFIG_CLI}"
+                    -s "${_SYSCFG_PRODUCT}"
+                    -o "${_SYSCFG_DIR}"
+                    "${_SYSCFG_SCRIPT}"
+            # Patch the generated ti_enet_init.c: const struct in static initializer
+            # is not valid C (tiarmclang enforces this). Move the assignment to runtime.
+            COMMAND ${CMAKE_COMMAND} -E env python3
+                    "${_PATCH_SCRIPT}"
+                    "${_SYSCFG_DIR}/ti_enet_init.c"
+            DEPENDS "${_SYSCFG_SCRIPT}" "${_PATCH_SCRIPT}"
+            COMMENT "Running SysConfig CLI for ti_am67a examples"
+            VERBATIM
+        )
+    endif()
 
     set(_SYSCFG_SRCS ${_SYSCFG_ALL_SRCS})
     add_custom_target(ti_am67a_syscfg DEPENDS ${_SYSCFG_ALL_OUTPUTS})
@@ -143,10 +186,23 @@ set(_LINKER_CMD "${CMAKE_CURRENT_SOURCE_DIR}/linker/main_r5fss0-0.cmd.ld")
 # add_ti_am67a_example(<name> <main_src>)
 #
 function(add_ti_am67a_example _name _main_src)
+    if(ZENOH_TI_AM67A_IPC)
+        # IPC mode: use RPMsg netif, no CPSW stub
+        set(_net_srcs
+            ${CMAKE_CURRENT_SOURCE_DIR}/common/zenoh_net_init_rpmsg.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/common/rpmsg_lwip_netif.c
+        )
+    else()
+        # Default CPSW Ethernet mode
+        set(_net_srcs
+            ${CMAKE_CURRENT_SOURCE_DIR}/common/zenoh_net_init.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/common/enet_board_stub.c
+        )
+    endif()
+
     add_executable(${_name}
         ${_main_src}
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/zenoh_net_init.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/common/enet_board_stub.c
+        ${_net_srcs}
         ${_SYSCFG_SRCS}
     )
 
@@ -155,50 +211,65 @@ function(add_ti_am67a_example _name _main_src)
     set_property(TARGET ${_name} PROPERTY C_STANDARD 11)
     set_property(TARGET ${_name} PROPERTY SUFFIX ".out")
 
-    target_compile_definitions(${_name} PRIVATE
-        SOC_J722S
-        BUILD_MAIN_R5F
-        ZENOH_TI_AM67A
-    )
+    if(ZENOH_TI_AM67A_IPC)
+        target_compile_definitions(${_name} PRIVATE
+            SOC_J722S
+            BUILD_MAIN_R5F
+            ZENOH_TI_AM67A
+            ZENOH_TI_AM67A_IPC
+        )
+    else()
+        target_compile_definitions(${_name} PRIVATE
+            SOC_J722S
+            BUILD_MAIN_R5F
+            ZENOH_TI_AM67A
+        )
+    endif()
 
-    # Extra enet / lwipif headers needed by SysConfig-generated files.
-    # The enet libraries expose headers under several sub-trees that are not
-    # covered by the top-level 'source/' root already in ZP_PLATFORM_INCLUDE_DIRS.
-    set(_ENET_ROOT "${MCU_PLUS_SDK_PATH}/source/networking/enet")
-    target_include_directories(${_name} PRIVATE
-        ${ZP_PLATFORM_INCLUDE_DIRS}
-        ${_SYSCFG_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/common
-        # enet core flat includes: <enet.h>, <enet_cfg.h>
-        "${_ENET_ROOT}/core/include"
-        "${_ENET_ROOT}/core/include/core"
-        "${_ENET_ROOT}/core/include/phy"
-        # enet utils: <enet_board.h>, <enet_apputils.h>, etc.
-        "${_ENET_ROOT}/core/utils/include"
-        # lwipif: "lwip2enet.h"
-        "${_ENET_ROOT}/core/lwipif/inc"
-        # enet core root: <include/core/...>, <priv/...>, <soc/...>, <src/...>
-        "${_ENET_ROOT}/core"
-        # enet hw_include: <networking/enet/hw_include/...> (also reachable via source/)
-        "${_ENET_ROOT}/hw_include"
-        # ethphy rtos drivers
-        "${MCU_PLUS_SDK_PATH}/source/board/ethphy/enet/rtos_drivers/include"
-        # SoC-specific config: <enet_soc_cfg.h>
-        "${_ENET_ROOT}/soc/k3/j722s"
-        # enet root: <soc/k3/j722s/enet_soc.h>, <hw_include/...>
-        "${_ENET_ROOT}"
-    )
-
-    target_link_libraries(${_name} PRIVATE
-        zenohpico::lib
-        ti_am67a_sdk::lwipif_cpsw
-        ti_am67a_sdk::lwip
-        ti_am67a_sdk::lwip_contrib
-        ti_am67a_sdk::enet_cpsw
-        ti_am67a_sdk::drivers
-        ti_am67a_sdk::board
-        ti_am67a_sdk::freertos
-    )
+    if(ZENOH_TI_AM67A_IPC)
+        # IPC mode: only lwIP stack, no CPSW enet headers
+        target_include_directories(${_name} PRIVATE
+            ${ZP_PLATFORM_INCLUDE_DIRS}
+            ${_SYSCFG_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/common
+        )
+        target_link_libraries(${_name} PRIVATE
+            zenohpico::lib
+            ti_am67a_sdk::lwip
+            ti_am67a_sdk::lwip_contrib
+            ti_am67a_sdk::drivers
+            ti_am67a_sdk::board
+            ti_am67a_sdk::freertos
+        )
+    else()
+        # CPSW Ethernet mode: extra enet/lwipif headers needed by SysConfig files
+        set(_ENET_ROOT "${MCU_PLUS_SDK_PATH}/source/networking/enet")
+        target_include_directories(${_name} PRIVATE
+            ${ZP_PLATFORM_INCLUDE_DIRS}
+            ${_SYSCFG_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/common
+            "${_ENET_ROOT}/core/include"
+            "${_ENET_ROOT}/core/include/core"
+            "${_ENET_ROOT}/core/include/phy"
+            "${_ENET_ROOT}/core/utils/include"
+            "${_ENET_ROOT}/core/lwipif/inc"
+            "${_ENET_ROOT}/core"
+            "${_ENET_ROOT}/hw_include"
+            "${MCU_PLUS_SDK_PATH}/source/board/ethphy/enet/rtos_drivers/include"
+            "${_ENET_ROOT}/soc/k3/j722s"
+            "${_ENET_ROOT}"
+        )
+        target_link_libraries(${_name} PRIVATE
+            zenohpico::lib
+            ti_am67a_sdk::lwipif_cpsw
+            ti_am67a_sdk::lwip
+            ti_am67a_sdk::lwip_contrib
+            ti_am67a_sdk::enet_cpsw
+            ti_am67a_sdk::drivers
+            ti_am67a_sdk::board
+            ti_am67a_sdk::freertos
+        )
+    endif()
 
     target_link_options(${_name} PRIVATE
         -Wl,--diag_suppress=10063
