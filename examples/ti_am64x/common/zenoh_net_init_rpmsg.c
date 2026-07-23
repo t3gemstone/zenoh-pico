@@ -50,7 +50,6 @@
 #include "lwip/netif.h"
 #include "lwip/sys.h"
 #include "lwip/tcpip.h"
-#include "netif/ethernet.h"
 
 /* TI DPL */
 #include <kernel/dpl/DebugP.h>
@@ -79,12 +78,15 @@ static void _tcpip_init_done_cb(void *arg) {
     ip4addr_aton(RPMSG_NETIF_GW,   &gw);
 
     /* Add the RPMsg netif.  rpmsg_lwip_netif_init() is called by lwIP as the
-     * netif init function; ethernet_input is the standard Ethernet input path. */
+     * netif init function.  Use tcpip_input (NOT ethernet_input) so that
+     * _recv_task can safely call netif->input() from outside tcpip_thread:
+     * tcpip_input posts the pbuf to the tcpip mailbox and returns immediately;
+     * tcpip_thread then calls ethernet_input in the correct core-lock context. */
     struct netif *p = netif_add(&s_netif,
                                 &ipaddr, &netmask, &gw,
                                 NULL,
                                 rpmsg_lwip_netif_init,
-                                ethernet_input);
+                                tcpip_input);
     if (p == NULL) {
         DebugP_log("[zenoh_net_rpmsg] netif_add failed\r\n");
         s_setup_result = ZENOH_NET_ERR_ENET;

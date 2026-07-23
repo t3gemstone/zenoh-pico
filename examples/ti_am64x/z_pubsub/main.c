@@ -46,7 +46,7 @@
 /* ---- Configuration -------------------------------------------------------- */
 #define PUB_KEYEXPR       "t3/pubsub/tx"
 #define SUB_KEYEXPR       "t3/pubsub/rx"
-#define MULTICAST_EP      "udp/224.0.0.224:7446"
+#define MULTICAST_EP      "udp/224.0.0.224:7446#iface=rp0"
 #define PUB_PERIOD_MS     1000U
 #define PUB_POOL_STAT_N   10U
 
@@ -199,6 +199,7 @@ void freertos_main(void *arg) {
         vTaskDelete(NULL);
         return;
     }
+    DebugP_log("[z_pubsub] Session open OK\r\n");
 
     if (zp_start_read_task(z_loan_mut(gs_session), NULL) < 0 ||
         zp_start_lease_task(z_loan_mut(gs_session), NULL) < 0) {

@@ -23,11 +23,10 @@ const debug_log  = scripting.addModule("/kernel/dpl/debug_log");
 const mpu_armv7  = scripting.addModule("/kernel/dpl/mpu_armv7", {}, false);
 const ipc        = scripting.addModule("/drivers/ipc/ipc");
 
-/* ---- UART (DebugP_log output) --------------------------------------------- */
-debug_log.enableUartLog                      = true;
-debug_log.uartLog.$name                      = "CONFIG_UART0";
-debug_log.uartLog.useWakeupDomainPeripherals = false;
-debug_log.uartLog.UART.$assign               = "USART0";
+/* ---- Debug log: memory trace only (Linux reads via debugfs trace0) --------- */
+debug_log.enableUartLog        = false;
+debug_log.enableCssLog         = false;
+debug_log.enableSharedMemLog   = false;
 
 /* ---- MPU regions ---------------------------------------------------------- */
 const mpu1 = mpu_armv7.addInstance();
@@ -72,12 +71,20 @@ mpu5.accessPermissions = "Supervisor RD+WR, User RD";
  * Adjust baseAddr/size to match your DTS carveout.
  */
 const mpu6 = mpu_armv7.addInstance();
-mpu6.$name             = "CONFIG_MPU_IPC_VRING";
-mpu6.baseAddr          = 0xA0000000;
-mpu6.size              = 21;          /* 2 MB carveout for VRING buffers */
-mpu6.attributes        = "Device";
+mpu6.$name             = "CONFIG_MPU_LINUX_IPC";
+mpu6.baseAddr          = 0xA2000000;
+mpu6.size              = 21;          /* 2 MB: Linux VRING, resource table, trace buf */
+mpu6.attributes        = "NonCached"; /* Normal Non-Cacheable (tex=1), NOT Device (tex=0) */
 mpu6.accessPermissions = "Supervisor RD+WR, User RD";
 mpu6.allowExecute      = false;
+
+const mpu7 = mpu_armv7.addInstance();
+mpu7.$name             = "CONFIG_MPU_RTOS_IPC_VRING";
+mpu7.baseAddr          = 0xA5000000;
+mpu7.size              = 24;          /* 16 MB: R5F↔R5F VRING (NOLOAD, must be non-cached) */
+mpu7.attributes        = "NonCached";
+mpu7.accessPermissions = "Supervisor RD+WR, User RD";
+mpu7.allowExecute      = false;
 
 /* ---- IPC RPMessage --------------------------------------------------------
  *

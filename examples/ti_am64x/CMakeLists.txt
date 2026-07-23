@@ -49,7 +49,7 @@ _import_sdk_lib(ti_am64x_sdk::board
 _import_sdk_lib(ti_am64x_sdk::enet_cpsw
     "${_SDK_SRC}/networking/enet/lib/enet-cpsw.am64x.r5f.ti-arm-clang.freertos.release.lib")
 _import_sdk_lib(ti_am64x_sdk::lwipif_cpsw
-    "${_SDK_SRC}/networking/enet/lib/lwipif-cpsw-freertos.am64x.r5f.ti-arm-clang.freertos.release.lib")
+    "${_SDK_SRC}/networking/enet/lib/lwipif-cpsw-freertos.am64x.r5f.ti-arm-clang.release.lib")
 _import_sdk_lib(ti_am64x_sdk::lwip
     "${_SDK_SRC}/networking/lwip/lib/lwip-freertos.am64x.r5f.ti-arm-clang.release.lib")
 _import_sdk_lib(ti_am64x_sdk::lwip_contrib

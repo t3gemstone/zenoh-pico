@@ -30,9 +30,9 @@ const mpu_armv7 = scripting.addModule("/kernel/dpl/mpu_armv7", {}, false);
 const ipc       = scripting.addModule("/drivers/ipc/ipc");
 
 /* ---- UART (DebugP_log output) --------------------------------------------- */
-debug_log.enableUartLog                      = true;
-debug_log.uartLog.$name                      = "CONFIG_UART0";
-debug_log.uartLog.UART.$assign               = "USART0";
+debug_log.enableUartLog        = false;
+debug_log.enableCssLog         = false;
+debug_log.enableSharedMemLog   = false;
 
 /* ---- MPU regions ---------------------------------------------------------- */
 const mpu1 = mpu_armv7.addInstance();

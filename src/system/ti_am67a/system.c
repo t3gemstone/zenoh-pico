@@ -281,7 +281,8 @@ z_result_t _z_condvar_wait_until(_z_condvar_t *cv, _z_mutex_t *m, const z_clock_
 
 /*------------------ Sleep ------------------*/
 z_result_t z_sleep_us(size_t time) {
-    vTaskDelay(pdMS_TO_TICKS(time / 1000));
+    TickType_t ticks = pdMS_TO_TICKS(time / 1000);
+    vTaskDelay(ticks > 0 ? ticks : 1);
     return _Z_RES_OK;
 }
 

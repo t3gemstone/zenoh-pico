@@ -34,62 +34,52 @@ and the CGT from [TI ARM Clang](https://www.ti.com/tool/ARM-CGT-CLANG).
 
 ---
 
-## Building — CPSW Ethernet mode (default)
+## Build Steps
 
-From the zenoh-pico repository root:
+### 1. Generate SysConfig files
 
-```bash
-cmake \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
-  -DZP_PLATFORM=ti_am64x \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DBUILD_EXAMPLES=ON \
-  -B build/ti_am64x -S .
-
-cmake --build build/ti_am64x --target examples -j$(nproc)
-```
-
-Outputs: `build/ti_am64x/examples/ti_am64x/z_pub.out`, `z_sub.out`, `z_pubsub.out`
-
-### Toolchain auto-detection
-
-`cmake/toolchain/ti-arm-clang-r5f.cmake` automatically finds tiarmclang under
-`/opt/ti/ti-cgt-armllvm_*`. Override with:
-
-```bash
-cmake ... -DCGT_TI_ARM_CLANG_PATH=/path/to/ti-cgt-armllvm_3.2.2.LTS ...
-```
-
-### SDK auto-detection
-
-`cmake/platforms/ti_am64x.cmake` looks for the SDK at
-`/opt/ti/mcu_plus_sdk_am64x_12_00_00_27`. Override with:
-
-```bash
-cmake ... -DMCU_PLUS_SDK_PATH=/path/to/mcu_plus_sdk_am64x_12_00_00_27 ...
-```
-
----
-
-## SysConfig code generation
-
-CMake runs SysConfig automatically if `sysconfig_cli.sh` is found. The generated
-files go into `examples/ti_am64x/syscfg/` (gitignored).
-
-To run manually:
+If CMake finds `sysconfig_cli.sh` at `/opt/ti/sysconfig_1.28.0/`, it **runs SysConfig automatically during `cmake --build`**. To run manually:
 
 ```bash
 /opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
-  -s /opt/ti/mcu_plus_sdk_am64x_12_00_00_27/.metadata/product.json \
-  -o examples/ti_am64x/syscfg \
-  examples/ti_am64x/example.syscfg
+    -s /opt/ti/mcu_plus_sdk_am64x_12_00_00_27/.metadata/product.json \
+    -o examples/ti_am64x/syscfg \
+    examples/ti_am64x/example.syscfg
 
 python3 examples/ti_am64x/patch_ti_enet_init.py \
-  examples/ti_am64x/syscfg/ti_enet_init.c
+    examples/ti_am64x/syscfg/ti_enet_init.c
 ```
 
 The `patch_ti_enet_init.py` script fixes a SysConfig code-generation bug where
 a `const` struct is used as a static initializer (invalid C).
+
+Generated files land in `syscfg/`. They are excluded by `.gitignore`; CMake regenerates them on a clean build.
+
+> **Note:** If `sysconfig_cli.sh` is in a different location, tell CMake:
+> ```bash
+> cmake ... -DSYSCONFIG_CLI=/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh
+> ```
+
+### 2. CMake configure
+
+```bash
+cmake -B build \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+    -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
+    -DZP_PLATFORM=ti_am64x \
+    -DBUILD_EXAMPLES=ON \
+    -DCMAKE_BUILD_TYPE=Release
+```
+
+> **Note:** `CGT_TI_ARM_CLANG_PATH` can also be set as an environment variable instead of passing `-D`.
+
+### 3. Build
+
+```bash
+cmake --build build --target examples -j$(nproc)
+```
+
+Output files: `build/examples/ti_am64x/z_pub.out`, `z_sub.out`, `z_pubsub.out`
 
 ---
 
@@ -102,26 +92,6 @@ a `const` struct is used as a static initializer (invalid C).
 | `z_pubsub.out` | Combined: publishes on `t3/pubsub/tx`, subscribes to `t3/pubsub/rx` |
 
 All examples use **peer mode** over **UDP multicast** (`udp/224.0.0.224:7446`).
-
----
-
-## Flashing and running — CPSW mode
-
-Convert the `.out` file to an appimage using TI's `uart_uniflash.py` or the SBL
-boot flow:
-
-```bash
-# Using TI's out2rprc + MulticoreImageGen (part of MCU+ SDK tools)
-${MCU_PLUS_SDK_PATH}/tools/boot/out2rprc/out2rprc.exe \
-    build/ti_am64x/examples/ti_am64x/z_pub.out z_pub.rprc
-
-${MCU_PLUS_SDK_PATH}/tools/boot/multicoreImageGen/MulticoreImageGen \
-    LE 55 z_pub.appimage \
-    0 ${MCU_PLUS_SDK_PATH}/source/drivers/sciclient/sysfw/binaries/sysfw.bin \
-    4 z_pub.rprc
-```
-
-Then flash via UART or SD card according to the am64x-evm Quick Start Guide.
 
 ---
 
@@ -210,23 +180,7 @@ cmake --build build --target examples -j$(nproc)
 
 Output files: `build/examples/ti_am64x/z_pub.out`, `z_sub.out`, `z_pubsub.out`
 
-#### 4. Flash to board (remoteproc)
-
-In IPC mode the R5F firmware is loaded by Linux remoteproc (not SBL). Copy the
-`.out` ELF directly to the remoteproc firmware directory:
-
-```bash
-# On the target Linux system:
-sudo cp z_pub.out /lib/firmware/am64x-mcu-r5f0_0-fw
-echo start | sudo tee /sys/class/remoteproc/remoteproc0/state
-```
-
-The ELF must be placed at `0xA0100000` (DDR_0 resource table) and
-`0xA0101000` (DDR_1 code/data) as defined in `linker/r5fss0-0_ipc.cmd.ld`.
-These addresses must be covered by a `reserved-memory` carveout in the Linux
-device tree.
-
-#### 5. Linux side — load rpmsg_net kernel module
+#### 4. Linux side — load rpmsg_net kernel module
 
 The `rpmsg_net` kernel module creates a virtual Ethernet device `rpmsg0` backed
 by the RPMsg channel. Source: [https://github.com/t3gemstone/rpmsg-net](https://github.com/t3gemstone/rpmsg-net)
@@ -249,15 +203,40 @@ sudo ip route add 224.0.0.0/4 dev rpmsg0
 When the R5F firmware boots it announces the `"rpmsg-enet"` service; `rpmsg_net.ko`
 matches on that name and the `rpmsg0` device becomes active.
 
-#### 6. Run zenoh on Linux
+#### 5. Build zenoh-pico CLI examples for Linux A53
+
+The `z_sub`, `z_pub`, etc. binaries come from zenoh-pico's own `examples/unix/c11/` sources. Cross-compile them from the development host:
 
 ```bash
-# Client mode: R5F connects to a router on Linux
-zenohd -l udp/192.168.200.2:7447
+# From the zenoh-pico repo root (development host, requires aarch64-linux-gnu-gcc):
+cmake -B build_linux_aarch64 \
+    -DCMAKE_SYSTEM_NAME=Linux \
+    -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+    -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_EXAMPLES=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_EXE_LINKER_FLAGS="-static" \
+    -DZP_PLATFORM=linux
 
-# Peer mode: multicast discovery (no router needed)
-# (no extra steps — R5F uses udp/224.0.0.224:7446 by default)
+cmake --build build_linux_aarch64 --target examples -j$(nproc)
 ```
+
+#### 6. Linux side — run zenoh
+
+Ensure `rpmsg0` is configured (step 4 above), then:
+
+```bash
+# Option A — zenoh-pico CLI peer (no router needed):
+z_sub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pubsub/tx"
+z_pub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pubsub/rx" -v "hello from linux"
+
+# Option B — zenohd router (default config scans 224.0.0.224:7446):
+zenohd
+```
+
+> **Common mistake**: `zenohd -l udp/192.168.200.2:7447` fails with `EADDRNOTAVAIL` (os error 99)
+> if `rpmsg0` is not yet configured. Use `zenohd` without `-l`, or `zenohd -l udp/0.0.0.0:7447`.
 
 ### Device tree / VRING carveout
 
@@ -266,6 +245,59 @@ carveout in the Linux device tree for the AM64x r5fss0-0 remoteproc. If your DTS
 uses a different address, update `CONFIG_MPU_LINUX_IPC.baseAddr` in
 `example_ipc.syscfg` and the `LINUX_IPC_SHM_MEM` region in
 `linker/r5fss0-0_ipc.cmd.ld` accordingly.
+
+### MPU configuration requirements
+
+Two MPU regions are critical for correct IPC operation. Both **must** use `attributes = "NonCached"` (tex=1, Normal Non-Cacheable). Using `"Device"` (tex=0) is architecturally incorrect for shared RAM — DCCIMVAC cache operations are UNPREDICTABLE on Device memory, making the trace buffer and VRING invisible to Linux.
+
+| Region name | Base address | Size | Purpose |
+|---|---|---|---|
+| `CONFIG_MPU_LINUX_IPC` | `0xA0000000` | 1 MB | Linux VRING + resource table + trace buffer |
+| `CONFIG_MPU_IPC_SHM`   | `0xA5000000` | 64 KB | R5F VRING / IPC shared memory |
+
+Both are set correctly in `example_ipc.syscfg`. Do not change `attributes` to `"Device"`.
+
+### Debug log (trace0) configuration
+
+The R5F trace buffer (`/sys/kernel/debug/remoteproc/remoteproc0/trace0`) is populated via `DebugP_log()` → `putchar_()` → `DebugP_memLogWriterPutChar()`.
+
+**Critical**: if `enableCssLog = true` (SysConfig default) or `enableUartLog = true`, SysConfig generates a `putchar_()` that calls the C stdlib `putchar(character)` **before** writing to the trace buffer. On bare-metal without a JTAG debugger, `putchar()` triggers ARM semihosting (`BKPT #0xAB`) and **hangs the firmware silently** — trace0 stays empty even though VirtIO is online.
+
+`example_ipc.syscfg` already sets:
+```js
+debug_log.enableCssLog       = false;
+debug_log.enableUartLog      = false;
+debug_log.enableSharedMemLog = false;
+```
+
+This produces the minimal `putchar_()`:
+```c
+void putchar_(char character) {
+    DebugP_memLogWriterPutChar(character);
+}
+```
+
+### lwIP pbuf allocation
+
+The SDK's `lwipopts.h` sets `PBUF_POOL_SIZE = 0` because the CPSW driver uses custom DMA pbufs. The RPMsg netif uses software-copy receive, so it must allocate from the heap instead:
+
+```c
+// rpmsg_lwip_netif.c — use PBUF_RAM, not PBUF_POOL
+struct pbuf *p = pbuf_alloc(PBUF_RAW, rx_len, PBUF_RAM);
+```
+
+### lwIP core lock
+
+The TI SDK builds lwIP with `LWIP_TCPIP_CORE_LOCKING = 1`. Any direct call to lwIP internal functions (e.g. `netif_find()`, `netif_ip4_addr()`) from a non-`tcpip_thread` task **must** hold the core lock:
+
+```c
+LOCK_TCPIP_CORE();
+struct netif *netif = netif_find(iface);
+// ... read netif fields ...
+UNLOCK_TCPIP_CORE();
+```
+
+The `udp_multicast_lwip.c` `__get_ip_from_iface()` function already wraps `netif_find()` and `netif_ip4_addr()` with the lock (guarded by `#if LWIP_TCPIP_CORE_LOCKING`).
 
 ---
 
@@ -393,6 +425,12 @@ Or use the [zenoh router](https://github.com/eclipse-zenoh/zenoh) for client/rou
 | `RPMessage_waitForLinuxReady timed out` | Linux remoteproc not started or DT mismatch | Verify `echo start > /sys/class/remoteproc/remoteproc0/state`; check VRING carveout in DTS vs `example_ipc.syscfg` |
 | `rpmsg_net.ko` not found after `insmod` | Service name mismatch | R5F announces `"rpmsg-enet"`; check `rpmsg_net.c` service name matches |
 | `rpmsg0` device does not appear | Module not loaded, or R5F not booted yet | Boot R5F first, then `insmod rpmsg_net.ko`; check `dmesg` for probe messages |
+| `trace0` is empty even though `virtio0: rpmsg host is online` | `putchar(character)` semihosting hang in `putchar_()` | Ensure `example_ipc.syscfg` has `enableCssLog=false` and `enableUartLog=false`; SysConfig must regenerate `ti_dpl_config.c` |
+| `trace0` is empty (wrong MPU attributes) | IPC region marked as Device (tex=0) instead of NonCached (tex=1) | Set `attributes = "NonCached"` in `example_ipc.syscfg` for both IPC MPU regions |
+| `pbuf_alloc failed (dropped N bytes)` — ARP/zenoh drops | SDK `PBUF_POOL_SIZE=0`; pool pbufs unavailable | `rpmsg_lwip_netif.c` must use `pbuf_alloc(PBUF_RAW, rx_len, PBUF_RAM)` — already fixed |
+| `z_open failed` (immediate, before network traffic) | UDP multicast locator missing `#iface=rp0` | Set `MULTICAST_EP "udp/224.0.0.224:7446#iface=rp0"` in `main.c` |
+| `Function called without core lock` assertion in `sys_arch.c` | Direct lwIP internal calls without `LOCK_TCPIP_CORE()` | `udp_multicast_lwip.c` wraps `netif_find()` with core lock — already fixed; do not call lwIP internals without the lock |
+| `ping 192.168.200.1` → Destination Host Unreachable | ARP dropped due to `pbuf_alloc failed` | Fix pbuf issue above; confirm `rpmsg0` has IP and is up |
 | Peer not ready after 15 s | Linux never sent first frame | Check `ip link set rpmsg0 up`; verify `ip addr` on `rpmsg0`; try `ping 192.168.200.1` from Linux |
 | Large zenoh messages dropped | MTU mismatch | Confirm `rpmsg_net.ko` was built with 512-byte VRING size (478-byte MTU) |
 | Linker: undefined `enet_cpsw` symbols in IPC mode | Old build directory used | Reconfigure with `-DZENOH_TI_AM64X_IPC=ON` in a fresh build dir |

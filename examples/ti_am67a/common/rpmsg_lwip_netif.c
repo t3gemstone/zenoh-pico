@@ -126,8 +126,8 @@ static void _recv_task(void *arg) {
             continue;
         }
 
-        /* Allocate a pbuf and copy the received Ethernet frame into it */
-        struct pbuf *p = pbuf_alloc(PBUF_RAW, rx_len, PBUF_POOL);
+        /* Allocate from heap (PBUF_POOL_SIZE=0 in SDK lwipopts, custom mem pools used) */
+        struct pbuf *p = pbuf_alloc(PBUF_RAW, rx_len, PBUF_RAM);
         if (p == NULL) {
             DebugP_log("[rpmsg_netif] pbuf_alloc failed (dropped %u bytes)\r\n",
                        (unsigned)rx_len);
@@ -135,10 +135,13 @@ static void _recv_task(void *arg) {
         }
         pbuf_take(p, s_recv_buf, rx_len);
 
-        /* Hand the frame to lwIP — must be called from the tcpip_thread context
-         * or, when NO_SYS=0, directly via the input function pointer.
-         * ethernet_input() is thread-safe in lwIP FreeRTOS port. */
-        if (s_netif->input(p, s_netif) != ERR_OK) {
+        /* Hand the frame to lwIP via tcpip_input() (set as netif->input in
+         * netif_add).  tcpip_input posts the pbuf to the tcpip mailbox so this
+         * is safe to call from any task without holding the core lock. */
+        DebugP_log("[rpmsg_netif] recv: injecting %u-byte frame into lwIP\r\n", (unsigned)rx_len);
+        err_t inp_err = s_netif->input(p, s_netif);
+        DebugP_log("[rpmsg_netif] recv: tcpip_input ret=%d\r\n", (int)inp_err);
+        if (inp_err != ERR_OK) {
             pbuf_free(p);
         }
     }
@@ -170,12 +173,14 @@ static err_t _netif_linkoutput(struct netif *netif, struct pbuf *p) {
         return ERR_OK;
     }
 
+    /* Use NO_WAIT: holding tcpip core lock while blocking here deadlocks the
+     * entire lwIP stack if the TX vring is temporarily full. */
     int32_t status = RPMessage_send(
         tx_buf, len,
         CSL_CORE_ID_A53SS0_0,          /* destination: Linux A53 core */
         (uint16_t)s_remote_endpt,       /* destination endpoint */
         RPMSG_NETIF_ENDPT,             /* source (local) endpoint */
-        SystemP_WAIT_FOREVER
+        SystemP_NO_WAIT
     );
 
     if (status != SystemP_SUCCESS) {
@@ -199,10 +204,12 @@ err_t rpmsg_lwip_netif_init(struct netif *netif) {
     int32_t status = RPMessage_waitForLinuxReady(
         pdMS_TO_TICKS(RPMSG_LINUX_READY_TIMEOUT_MS));
     if (status != SystemP_SUCCESS) {
-        DebugP_log("[rpmsg_netif] RPMessage_waitForLinuxReady timed out\r\n");
-        return ERR_IF;
+        /* Timeout is non-fatal: Linux may have already sent the sync before
+         * this task started.  The VirtIO VRING is up regardless; proceed. */
+        DebugP_log("[rpmsg_netif] IPC ready timeout (non-fatal), proceeding\r\n");
+    } else {
+        DebugP_log("[rpmsg_netif] Linux IPC ready\r\n");
     }
-    DebugP_log("[rpmsg_netif] Linux IPC ready\r\n");
 
     /* ---- Create local RPMessage endpoint ---- */
     RPMessage_CreateParams cp;

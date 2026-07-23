@@ -46,7 +46,7 @@
 /* ---- Configuration -------------------------------------------------------- */
 #define PUB_KEYEXPR       "t3/pubsub/tx"
 #define SUB_KEYEXPR       "t3/pubsub/rx"
-#define MULTICAST_EP      "udp/224.0.0.224:7446"
+#define MULTICAST_EP      "udp/224.0.0.224:7446#iface=rp0"
 #define PUB_PERIOD_MS     1000U
 #define PUB_POOL_STAT_N   10U
 
@@ -161,10 +161,13 @@ static void sub_task(void *arg) {
 void freertos_main(void *arg) {
     (void)arg;
 
+    DebugP_log("[freertos_main] started\r\n");
     Drivers_open();
+    DebugP_log("[freertos_main] Drivers_open done\r\n");
     Board_driversOpen();
 
     /* Network */
+    DebugP_log("[freertos_main] calling zenoh_net_init\r\n");
     int net_rc = zenoh_net_init();
     if (net_rc != ZENOH_NET_OK) {
         DebugP_log("[z_pubsub] Network init failed (%d)\r\n", net_rc);
@@ -194,11 +197,13 @@ void freertos_main(void *arg) {
     zp_config_insert(z_loan_mut(cfg), Z_CONFIG_MODE_KEY, "peer");
     zp_config_insert(z_loan_mut(cfg), Z_CONFIG_LISTEN_KEY, MULTICAST_EP);
 
+    DebugP_log("[z_pubsub] Calling z_open...\r\n");
     if (z_open(&gs_session, z_move(cfg), NULL) < 0) {
         DebugP_log("[z_pubsub] z_open failed\r\n");
         vTaskDelete(NULL);
         return;
     }
+    DebugP_log("[z_pubsub] Session open OK\r\n");
 
     if (zp_start_read_task(z_loan_mut(gs_session), NULL) < 0 ||
         zp_start_lease_task(z_loan_mut(gs_session), NULL) < 0) {
@@ -216,7 +221,9 @@ void freertos_main(void *arg) {
 
 int main(void) {
     System_init();
+    DebugP_log("[main] System_init done\r\n");
     Board_init();
+    DebugP_log("[main] Board_init done, starting FreeRTOS\r\n");
 
     xTaskCreateStatic(freertos_main, "freertos_main", MAIN_TASK_STACK,
                       NULL, configMAX_PRIORITIES - 1,

@@ -1,6 +1,6 @@
-# zenoh-pico — TI AM67A (J722S) Cortex-R5F Examples
+# zenoh-pico — T3 Gemstone O1 / TI AM67A (J722S) Cortex-R5F Examples
 
-This directory contains three FreeRTOS + lwIP examples that run zenoh-pico on the **main-R5FSS0-0** core of the TI AM67A SoC.
+This directory contains three FreeRTOS + lwIP examples that run zenoh-pico on the **main-R5FSS0-0** Cortex-R5F core of the **T3 Gemstone O1** development board ([t3gemstone.org](https://t3gemstone.org)), which is based on the TI AM67A (J722S) SoC.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ Default install paths:
 | `z_sub` | Subscriber — prints received samples via `DebugP_log` | `t3/pub/**` |
 | `z_pubsub` | Both combined — two separate FreeRTOS tasks | `t3/pubsub/tx` / `t3/pubsub/rx` |
 
-All examples use **peer mode + UDP multicast** (`udp/224.0.0.224:7446`).
+All examples use **peer mode + UDP multicast** (`udp/224.0.0.224:7446#iface=rp0` in IPC mode, `#iface=en0` or similar for CPSW mode).
 
 The examples support two transport backends selectable at build time:
 
@@ -75,24 +75,6 @@ cmake --build build --target examples -j$(nproc)
 
 Output files: `build/examples/ti_am67a/z_pub.out`, `z_sub.out`, `z_pubsub.out`
 
-### 4. Flash to board (J722S EVM)
-
-```bash
-# Convert to RPRC
-${MCU_PLUS_SDK_PATH}/tools/boot/out2rprc/out2rprc.exe z_pub.out z_pub.rprc
-
-# Create multi-core image
-${MCU_PLUS_SDK_PATH}/tools/boot/multicoreImageGen/MulticoreImageGen \
-    LE 55 z_pub.appimage \
-    0 ${MCU_PLUS_SDK_PATH}/source/drivers/sciclient/sysfw/binaries/sysfw.bin \
-    4 z_pub.rprc
-
-# Flash via UART (uniflash or tiboot3 bootloader)
-python3 ${MCU_PLUS_SDK_PATH}/tools/boot/uart_uniflash.py \
-    --cfg tools/boot/sbl_prebuilt/j722s-evm/default_sbl_uart_hs_fs.cfg \
-    --appimage z_pub.appimage
-```
-
 ---
 
 ## IPC / RPMsg Transport Mode
@@ -109,7 +91,7 @@ lwIP netif (rp0)                        rpmsg0 (virtual Ethernet)
 rpmsg_lwip_netif.c                      rpmsg_net.ko
    │ RPMessage_send/recv                     │ rpmsg_endpoint
    └──────── VRING shared DRAM ──────────────┘
-              (0xA0000000, non-cached)
+              (0xA2000000, non-cached)
 ```
 
 **IP addressing** (static, compile-time defaults):
@@ -182,19 +164,101 @@ sudo ip route add 224.0.0.0/4 dev rpmsg0
 
 When the R5F firmware boots it announces the `"rpmsg-enet"` service; `rpmsg_net.ko` matches on that name and the `rpmsg0` device becomes active.
 
-#### 5. Run zenoh on Linux
+#### 5. Build zenoh-pico CLI examples for Linux A53
+
+The `z_sub`, `z_pub`, etc. binaries come from zenoh-pico's own `examples/unix/c11/` sources. Cross-compile them from the development host:
 
 ```bash
-# Client mode: R5F connects to a router on Linux
-zenohd -l udp/192.168.200.2:7447
+# From the zenoh-pico repo root (development host, requires aarch64-linux-gnu-gcc):
+cmake -B build_linux_aarch64 \
+    -DCMAKE_SYSTEM_NAME=Linux \
+    -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+    -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_EXAMPLES=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_EXE_LINKER_FLAGS="-static" \
+    -DZP_PLATFORM=linux
 
-# Peer mode: multicast discovery (no router needed)
-# (no extra steps — R5F uses udp/224.0.0.224:7446 by default)
+cmake --build build_linux_aarch64 --target examples -j$(nproc)
 ```
+
+#### 6. Run zenoh on Linux
+
+Ensure `rpmsg0` is configured (step 4 above), then:
+
+```bash
+# Option A — zenoh-pico CLI peer (no router needed):
+z_sub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pubsub/tx"
+z_pub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pubsub/rx" -v "hello from linux"
+
+# Option B — zenohd router (default config scans 224.0.0.224:7446):
+zenohd
+```
+
+> **Common mistake**: `zenohd -l udp/192.168.200.2:7447` fails with `EADDRNOTAVAIL` (os error 99)
+> if `rpmsg0` is not yet configured. Use `zenohd` without `-l`, or `zenohd -l udp/0.0.0.0:7447`.
 
 ### Device tree / VRING carveout
 
-The VRING shared memory at `0xA0000000` must match the `reserved-memory` carveout in the Linux device tree for the J722S. If your DTS uses a different address, update `CONFIG_MPU_IPC_VRING.baseAddr` in `example_ipc.syscfg` accordingly.
+The VRING shared memory at `0xA2000000` must match the `reserved-memory` carveout in the Linux device tree for the J722S (`main-r5fss-dma-memory-region@a2000000`). If your DTS uses a different address, update `CONFIG_MPU_LINUX_IPC.baseAddr` in `example_ipc.syscfg` accordingly.
+
+### MPU configuration requirements
+
+Two MPU regions are critical for correct IPC operation. Both **must** use `attributes = "NonCached"` (tex=1, Normal Non-Cacheable). Using `"Device"` (tex=0) is architecturally incorrect for shared RAM — DCCIMVAC cache operations are UNPREDICTABLE on Device memory, making the trace buffer and VRING invisible to Linux.
+
+| Region name | Base address | Size | Purpose |
+|---|---|---|---|
+| `CONFIG_MPU_LINUX_IPC` | `0xA2000000` | 2 MB | Linux VRING + resource table + trace buffer |
+| `CONFIG_MPU_RTOS_IPC_VRING` | `0xA5000000` | 16 MB | R5F↔R5F VRING (NOLOAD section) |
+
+Both are set correctly in `example_ipc.syscfg`. Do not change `attributes` to `"Device"`.
+
+### Debug log (trace0) configuration
+
+The R5F trace buffer (`/sys/kernel/debug/remoteproc/remoteproc3/trace0`) is populated via `DebugP_log()` → `putchar_()` → `DebugP_memLogWriterPutChar()`.
+
+**Critical**: if `enableCssLog = true` (SysConfig default) or `enableUartLog = true`, SysConfig generates a `putchar_()` that calls the C stdlib `putchar(character)` **before** writing to the trace buffer. On bare-metal without a JTAG debugger, `putchar()` triggers ARM semihosting (`BKPT #0xAB`) and **hangs the firmware silently** — trace0 stays empty even though VirtIO is online.
+
+`example_ipc.syscfg` already sets:
+```js
+debug_log.enableCssLog       = false;
+debug_log.enableUartLog      = false;
+debug_log.enableSharedMemLog = false;
+```
+
+This produces the minimal `putchar_()`:
+```c
+void putchar_(char character) {
+    DebugP_memLogWriterPutChar(character);
+}
+```
+
+### lwIP pbuf allocation
+
+The SDK's `lwipopts.h` sets `PBUF_POOL_SIZE = 0` because the CPSW driver uses custom DMA pbufs. The RPMsg netif uses software-copy receive, so it must allocate from the heap instead:
+
+```c
+// rpmsg_lwip_netif.c — use PBUF_RAM, not PBUF_POOL
+struct pbuf *p = pbuf_alloc(PBUF_RAW, rx_len, PBUF_RAM);
+```
+
+Custom memory pools are available (25×128 B, 18×1568 B, 4×4096 B) and handle all normal frame sizes (42-byte ARP, 329-byte zenoh SCOUT, etc.).
+
+### lwIP core lock
+
+The TI SDK builds lwIP with `LWIP_TCPIP_CORE_LOCKING = 1`. Any direct call to lwIP internal functions (e.g. `netif_find()`, `netif_ip4_addr()`) from a non-`tcpip_thread` task **must** hold the core lock:
+
+```c
+LOCK_TCPIP_CORE();
+struct netif *netif = netif_find(iface);
+// ... read netif fields ...
+UNLOCK_TCPIP_CORE();
+```
+
+`LOCK_TCPIP_CORE()` uses a FreeRTOS recursive mutex, so it is safe to call while socket API functions (which also acquire the lock internally) are nested within the same call chain.
+
+The `udp_multicast_lwip.c` `__get_ip_from_iface()` function already wraps `netif_find()` and `netif_ip4_addr()` with the lock.
 
 ---
 
@@ -283,9 +347,14 @@ Inside `rpmsg_lwip_netif_init()`:
 | R5F_VECS | 0x00000000 | 64 B | Exception vectors |
 | R5F_TCMA | 0x00000040 | 32 KB | TCM-A (fast code) |
 | R5F_TCMB0 | 0x41010000 | 16 KB | TCM-B0 (fast data) |
+| DDR_IPC_RSC_TABLE | 0xA2100000 | 1 KB | VirtIO resource table (Linux reads at boot) |
+| DDR_IPC_TRACE_LINUX | 0xA2100400 | 4 KB | `gDebugMemLog` → Linux `trace0` debugfs |
 | DDR_CODE_DATA | 0xA2200000 | 14 MB | Code + data + stack + heap |
+| RTOS_VRING (NOLOAD) | 0xA5000000 | 16 MB | R5F↔R5F VRING (IPC mode only) |
 
-Stack size: 16 KB | Heap size: 64 KB (lwIP pbuf pool)
+Stack size: 16 KB | Heap size: 64 KB
+
+> **Note:** Regions `0xA2000000–0xA21FFFFF` and `0xA5000000–0xA4FFFFFF` must be marked **NonCached** (tex=1) in the MPU. Linux maps these same physical addresses via the DTS `reserved-memory` carveout `main-r5fss-dma-memory-region@a2000000`.
 
 ---
 
@@ -307,6 +376,12 @@ Stack size: 16 KB | Heap size: 64 KB (lwIP pbuf pool)
 | `RPMessage_waitForLinuxReady timed out` | Linux remoteproc not started or DT mismatch | Verify remoteproc firmware loading; check VRING carveout address in DTS vs `example_ipc.syscfg` |
 | `rpmsg_net.ko` not found after `insmod` | Service name mismatch | R5F announces `"rpmsg-enet"`; check `rpmsg_net.c` `RPM_ENET_CH_NAME` matches |
 | `rpmsg0` device does not appear | Kernel module not loaded, or R5F firmware not booted yet | Boot R5F first, then `insmod rpmsg_net.ko`; check `dmesg` for `rpmsg_net` probe messages |
+| `trace0` is empty even though `virtio0: rpmsg host is online` | `putchar(character)` semihosting hang in `putchar_()` | Ensure `example_ipc.syscfg` has `enableCssLog=false` and `enableUartLog=false`; SysConfig must regenerate `ti_dpl_config.c` |
+| `trace0` is empty (wrong MPU attributes) | IPC region marked as Device (tex=0) instead of NonCached (tex=1) | Set `attributes = "NonCached"` in `example_ipc.syscfg` for both IPC MPU regions |
+| `pbuf_alloc failed (dropped N bytes)` — ARP/zenoh drops | SDK `PBUF_POOL_SIZE=0`; pool pbufs unavailable | `rpmsg_lwip_netif.c` must use `pbuf_alloc(PBUF_RAW, rx_len, PBUF_RAM)` — already fixed |
+| `z_open failed` (immediate, before network traffic) | UDP multicast locator missing `#iface=rp0` | Set `MULTICAST_EP "udp/224.0.0.224:7446#iface=rp0"` in `main.c` |
+| `Function called without core lock` assertion in `sys_arch.c` | Direct lwIP internal calls without `LOCK_TCPIP_CORE()` | `udp_multicast_lwip.c` wraps `netif_find()` with core lock — already fixed; do not call lwIP internals without the lock |
+| `ping 192.168.200.1` → Destination Host Unreachable | ARP dropped due to `pbuf_alloc failed` | Fix pbuf issue above; confirm `rpmsg0` has IP and is up |
 | Peer not ready after 15 s | Linux never sent first frame | Check `ip link set rpmsg0 up`; verify `ip addr` on `rpmsg0`; try `ping 192.168.200.1` from Linux |
 | Large zenoh messages dropped | MTU mismatch | Confirm `rpmsg_net.ko` was built from `tools/rpmsg_net/` (fixed 512-byte VRING size, 478-byte MTU) |
 | Linker: undefined `enet_cpsw` symbols in IPC mode | Old build directory used | Reconfigure with `-DZENOH_TI_AM67A_IPC=ON` in a fresh build dir |
