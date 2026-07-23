@@ -193,7 +193,7 @@ regenerates and patches them automatically on a clean build.
 #### 2. CMake configure — IPC mode
 
 ```bash
-cmake -B build_ipc \
+cmake -B build \
     -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
     -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
     -DZP_PLATFORM=ti_am64x \
@@ -205,10 +205,10 @@ cmake -B build_ipc \
 #### 3. Build
 
 ```bash
-cmake --build build_ipc --target examples -j$(nproc)
+cmake --build build --target examples -j$(nproc)
 ```
 
-Output files: `build_ipc/examples/ti_am64x/z_pub.out`, `z_sub.out`, `z_pubsub.out`
+Output files: `build/examples/ti_am64x/z_pub.out`, `z_sub.out`, `z_pubsub.out`
 
 #### 4. Flash to board (remoteproc)
 

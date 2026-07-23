@@ -179,7 +179,11 @@ else()
 endif()
 
 # ---- Linker command file ----------------------------------------------------
-set(_LINKER_CMD "${CMAKE_CURRENT_SOURCE_DIR}/linker/main_r5fss0-0.cmd.ld")
+if(ZENOH_TI_AM67A_IPC)
+    set(_LINKER_CMD "${CMAKE_CURRENT_SOURCE_DIR}/linker/main_r5fss0-0_ipc.cmd.ld")
+else()
+    set(_LINKER_CMD "${CMAKE_CURRENT_SOURCE_DIR}/linker/main_r5fss0-0.cmd.ld")
+endif()
 
 # ---- Helper: create one example executable ----------------------------------
 #

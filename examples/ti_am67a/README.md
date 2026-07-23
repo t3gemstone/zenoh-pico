@@ -146,7 +146,7 @@ Generated files land in `syscfg_ipc/`. CMake regenerates them automatically if `
 #### 2. CMake configure — IPC mode
 
 ```bash
-cmake -B build_ipc \
+cmake -B build \
     -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
     -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
     -DZP_PLATFORM=ti_am67a \
@@ -158,7 +158,7 @@ cmake -B build_ipc \
 #### 3. Build
 
 ```bash
-cmake --build build_ipc --target examples -j$(nproc)
+cmake --build build --target examples -j$(nproc)
 ```
 
 #### 4. Linux side — load rpmsg_net kernel module
