@@ -10,45 +10,50 @@
  *   - pub_task  : publishes on "t3/pubsub/tx" every second
  *   - sub_task  : subscribes to "t3/pubsub/rx", prints received samples
  *
- * Uses peer mode over UDP multicast (224.0.0.224:7446).
- * Both tasks wait on a shared semaphore before accessing the session.
- *
- * Build prerequisites: see z_pub/main.c header.
+ * Session mode is selected at compile time via CLIENT_OR_PEER:
+ *   0 = client  → connects to a zenoh router at ZENOH_LOCATOR (TCP/UDP unicast)
+ *   1 = peer    → UDP multicast, no router needed (DEFAULT)
  */
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-/* TI MCU+ SDK — SysConfig-generated (must exist in syscfg/) */
 #include "ti_drivers_config.h"
 #include "ti_drivers_open_close.h"
 #include "ti_board_config.h"
 #include "ti_board_open_close.h"
 
-/* TI DPL */
 #include <kernel/dpl/DebugP.h>
 
-/* FreeRTOS */
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
 
-/* zenoh-pico */
 #include <zenoh-pico.h>
-
-/* zenoh-pico pool allocator stats */
 #include "zenoh-pico/system/platform/ti_am67a/mem_pool.h"
-
-/* Example network init */
 #include "zenoh_net_init.h"
 
+/* ---- Session mode ---------------------------------------------------------
+ * CLIENT_OR_PEER  0 = client (connects to router via TCP/UDP unicast)
+ *                 1 = peer   (UDP multicast, no router needed) — DEFAULT
+ */
+#define CLIENT_OR_PEER  1
+#if CLIENT_OR_PEER == 0
+#define ZENOH_MODE     "client"
+#define ZENOH_LOCATOR  "tcp/192.168.1.100:7447"
+#elif CLIENT_OR_PEER == 1
+#define ZENOH_MODE     "peer"
+#define ZENOH_LOCATOR  "udp/224.0.0.224:7446"
+#else
+#error "CLIENT_OR_PEER must be 0 (client) or 1 (peer)"
+#endif
+
 /* ---- Configuration -------------------------------------------------------- */
-#define PUB_KEYEXPR       "t3/pubsub/tx"
-#define SUB_KEYEXPR       "t3/pubsub/rx"
-#define MULTICAST_EP      "udp/224.0.0.224:7446#iface=rp0"
-#define PUB_PERIOD_MS     1000U
-#define PUB_POOL_STAT_N   10U
+#define PUB_KEYEXPR    "t3/pubsub/tx"
+#define SUB_KEYEXPR    "t3/pubsub/rx"
+#define PUB_PERIOD_MS  1000U
+#define PUB_POOL_STAT_N 10U
 
 /* ---- FreeRTOS task parameters --------------------------------------------- */
 #define PUB_TASK_STACK  (8192U / sizeof(configSTACK_DEPTH_TYPE))
@@ -63,9 +68,9 @@ static StackType_t  gMainTaskStack[MAIN_TASK_STACK] __attribute__((aligned(32)))
 static StaticTask_t gMainTaskObj;
 
 /* ---- Shared session state ------------------------------------------------- */
-static z_owned_session_t     gs_session;
-static SemaphoreHandle_t     gs_session_ready;
-static StaticSemaphore_t     gs_session_ready_buf;
+static z_owned_session_t gs_session;
+static SemaphoreHandle_t gs_session_ready;
+static StaticSemaphore_t gs_session_ready_buf;
 
 /* ---- Sample handler ------------------------------------------------------- */
 static void rx_handler(z_loaned_sample_t *sample, void *ctx) {
@@ -90,9 +95,7 @@ static void rx_handler(z_loaned_sample_t *sample, void *ctx) {
 static void pub_task(void *arg) {
     (void)arg;
 
-    /* Wait until the session is open */
     xSemaphoreTake(gs_session_ready, portMAX_DELAY);
-    /* Give it back so sub_task can take it too */
     xSemaphoreGive(gs_session_ready);
 
     z_owned_publisher_t pub;
@@ -131,7 +134,6 @@ static void pub_task(void *arg) {
 static void sub_task(void *arg) {
     (void)arg;
 
-    /* Wait until the session is open */
     xSemaphoreTake(gs_session_ready, portMAX_DELAY);
     xSemaphoreGive(gs_session_ready);
 
@@ -161,13 +163,9 @@ static void sub_task(void *arg) {
 void freertos_main(void *arg) {
     (void)arg;
 
-    DebugP_log("[freertos_main] started\r\n");
     Drivers_open();
-    DebugP_log("[freertos_main] Drivers_open done\r\n");
     Board_driversOpen();
 
-    /* Network */
-    DebugP_log("[freertos_main] calling zenoh_net_init\r\n");
     int net_rc = zenoh_net_init();
     if (net_rc != ZENOH_NET_OK) {
         DebugP_log("[z_pubsub] Network init failed (%d)\r\n", net_rc);
@@ -179,31 +177,29 @@ void freertos_main(void *arg) {
 
     char ip_str[16];
     zenoh_net_ip_str(ip_str, sizeof(ip_str));
-    DebugP_log("[z_pubsub] IP: %s\r\n", ip_str);
+    DebugP_log("[z_pubsub] IP: %s  mode: %s\r\n", ip_str, ZENOH_MODE);
 
-    /* Session ready semaphore (binary, starts taken) */
     gs_session_ready = xSemaphoreCreateBinaryStatic(&gs_session_ready_buf);
 
-    /* Spawn pub and sub tasks before opening the session so they exist when
-     * the semaphore is given — they will block on xSemaphoreTake. */
     xTaskCreateStatic(pub_task, "z_pubsub_pub", PUB_TASK_STACK,
                       NULL, configMAX_PRIORITIES - 2, gPubTaskStack, &gPubTaskObj);
     xTaskCreateStatic(sub_task, "z_pubsub_sub", SUB_TASK_STACK,
                       NULL, configMAX_PRIORITIES - 2, gSubTaskStack, &gSubTaskObj);
 
-    /* Configure and open session */
     z_owned_config_t cfg;
     z_config_default(&cfg);
-    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_MODE_KEY, "peer");
-    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_LISTEN_KEY, MULTICAST_EP);
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_MODE_KEY, ZENOH_MODE);
+#if CLIENT_OR_PEER == 0
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_CONNECT_KEY, ZENOH_LOCATOR);
+#else
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_LISTEN_KEY, ZENOH_LOCATOR);
+#endif
 
-    DebugP_log("[z_pubsub] Calling z_open...\r\n");
     if (z_open(&gs_session, z_move(cfg), NULL) < 0) {
         DebugP_log("[z_pubsub] z_open failed\r\n");
         vTaskDelete(NULL);
         return;
     }
-    DebugP_log("[z_pubsub] Session open OK\r\n");
 
     if (zp_start_read_task(z_loan_mut(gs_session), NULL) < 0 ||
         zp_start_lease_task(z_loan_mut(gs_session), NULL) < 0) {
@@ -213,22 +209,16 @@ void freertos_main(void *arg) {
         return;
     }
 
-    /* Unblock pub and sub tasks */
     xSemaphoreGive(gs_session_ready);
-
     vTaskDelete(NULL);
 }
 
 int main(void) {
     System_init();
-    DebugP_log("[main] System_init done\r\n");
     Board_init();
-    DebugP_log("[main] Board_init done, starting FreeRTOS\r\n");
-
     xTaskCreateStatic(freertos_main, "freertos_main", MAIN_TASK_STACK,
                       NULL, configMAX_PRIORITIES - 1,
                       gMainTaskStack, &gMainTaskObj);
-
     vTaskStartScheduler();
     DebugP_assertNoLog(0);
     return 0;

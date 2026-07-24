@@ -286,7 +286,39 @@ function(add_ti_am67a_example _name _main_src)
     add_dependencies(examples ${_name})
 endfunction()
 
+# ---- IDL code generation (msg/example.idl → msg/example.h) -----------------
+set(_IDL_SCRIPT  "${CMAKE_CURRENT_SOURCE_DIR}/idlc.py")
+set(_IDL_SRC     "${CMAKE_CURRENT_SOURCE_DIR}/msg/example.idl")
+set(_IDL_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/msg")
+set(_IDL_HDR     "${_IDL_OUT_DIR}/example.h")
+
+add_custom_command(
+    OUTPUT  "${_IDL_HDR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_IDL_OUT_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E env python3
+            "${_IDL_SCRIPT}"
+            --idl     "${_IDL_SRC}"
+            --output  "${_IDL_OUT_DIR}"
+            --language c
+            --no-packed
+            --zenoh
+    DEPENDS "${_IDL_SRC}" "${_IDL_SCRIPT}"
+    COMMENT "idlc: generating msg/example.h from msg/example.idl"
+    VERBATIM
+)
+add_custom_target(ti_am67a_idl_gen DEPENDS "${_IDL_HDR}")
+
 # ---- Example targets --------------------------------------------------------
-add_ti_am67a_example(z_pub     z_pub/main.c)
-add_ti_am67a_example(z_sub     z_sub/main.c)
-add_ti_am67a_example(z_pubsub  z_pubsub/main.c)
+add_ti_am67a_example(z_pub       z_pub.c)
+add_ti_am67a_example(z_sub       z_sub.c)
+add_ti_am67a_example(z_pubsub    z_pubsub.c)
+add_ti_am67a_example(z_put       z_put.c)
+add_ti_am67a_example(z_pull      z_pull.c)
+add_ti_am67a_example(z_scout     z_scout.c)
+add_ti_am67a_example(z_queryable z_queryable.c)
+add_ti_am67a_example(z_get       z_get.c)
+add_ti_am67a_example(z_discover  z_discover.c)
+add_ti_am67a_example(z_node      z_node.c)
+
+add_dependencies(z_node ti_am67a_idl_gen)
+target_include_directories(z_node PRIVATE "${_IDL_OUT_DIR}")

@@ -4,6 +4,7 @@ build_default
 crossbuilds
 CMakeFiles
 compile_commands.json
+build_*
 
 # vscode
 .vscode 

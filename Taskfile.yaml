@@ -1,0 +1,104 @@
+version: '3'
+
+vars:
+  BOARD: ti_am67a
+  IPC: "ON"
+  BUILD_DIR: build
+  HOST: root@o1
+  REMOTE_PATH: /lib/firmware/zenoh
+  LINUX_BUILD_DIR: build_linux_aarch64
+  LINUX_REMOTE_PATH: /usr/local/bin
+  SYSCONFIG_CLI: /opt/ti/sysconfig_1.28.0/sysconfig_cli.sh
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  configure:
+    desc: "Wipe {{.BUILD_DIR}}/, run sysconfig, then cmake for {{.BOARD}} (IPC={{.IPC}})"
+    vars:
+      SDK_PRODUCT:
+        sh: |
+          case "{{.BOARD}}" in
+            ti_am67a) echo "/opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json" ;;
+            ti_am64x) echo "/opt/ti/mcu_plus_sdk_am64x_12_00_00_27/.metadata/product.json" ;;
+            *) echo "UNKNOWN_SDK_FOR_{{.BOARD}}" ;;
+          esac
+      IPC_FLAG:
+        sh: |
+          case "{{.BOARD}}" in
+            ti_am67a) echo "ZENOH_TI_AM67A_IPC" ;;
+            ti_am64x) echo "ZENOH_TI_AM64X_IPC" ;;
+            *) echo "ZENOH_UNKNOWN_IPC" ;;
+          esac
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - |
+        if [ "{{.IPC}}" = "ON" ]; then
+          {{.SYSCONFIG_CLI}} \
+            -s {{.SDK_PRODUCT}} \
+            -o examples/{{.BOARD}}/syscfg_ipc \
+            examples/{{.BOARD}}/example_ipc.syscfg
+        else
+          {{.SYSCONFIG_CLI}} \
+            -s {{.SDK_PRODUCT}} \
+            -o examples/{{.BOARD}}/syscfg \
+            examples/{{.BOARD}}/example.syscfg
+          python3 examples/{{.BOARD}}/patch_ti_enet_init.py \
+            examples/{{.BOARD}}/syscfg/ti_enet_init.c
+        fi
+      - |
+        cmake \
+          -B {{.BUILD_DIR}} \
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+          -DZP_PLATFORM={{.BOARD}} \
+          -D{{.IPC_FLAG}}={{.IPC}} \
+          -DBUILD_EXAMPLES=ON \
+          -DBUILD_SHARED_LIBS=OFF
+
+  build:
+    cmds:
+      - make
+
+  upload:
+    desc: "Upload {{.BOARD}} .out files -> {{.HOST}}:{{.REMOTE_PATH}}"
+    deps: [ build ]
+    cmds:
+      - ssh {{.HOST}} "mkdir -p {{.REMOTE_PATH}}"
+      - scp {{.BUILD_DIR}}/examples/{{.BOARD}}/*.out {{.HOST}}:{{.REMOTE_PATH}}/
+      - |
+        echo "Uploaded:"
+        for f in {{.BUILD_DIR}}/examples/{{.BOARD}}/*.out; do
+          echo "  $(basename $f) -> {{.HOST}}:{{.REMOTE_PATH}}/$(basename $f)"
+        done
+
+  build:linux:
+    desc: "Configure + build Linux aarch64 examples -> {{.LINUX_BUILD_DIR}}/"
+    cmds:
+      - |
+        cmake \
+          -B {{.LINUX_BUILD_DIR}} \
+          -DCMAKE_SYSTEM_NAME=Linux \
+          -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+          -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_EXAMPLES=ON \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DZP_PLATFORM=linux
+      - cmake --build {{.LINUX_BUILD_DIR}} --target examples -j$(nproc)
+
+  upload:linux:
+    desc: "Upload Linux aarch64 examples -> {{.HOST}}:{{.LINUX_REMOTE_PATH}}"
+    deps: [ build:linux ]
+    cmds:
+      - ssh {{.HOST}} "mkdir -p {{.LINUX_REMOTE_PATH}}"
+      - |
+        bins=$(find {{.LINUX_BUILD_DIR}}/examples -maxdepth 1 -type f -executable)
+        scp $bins {{.HOST}}:{{.LINUX_REMOTE_PATH}}/
+        echo "Uploaded:"
+        for f in $bins; do
+          echo "  $(basename $f) -> {{.HOST}}:{{.LINUX_REMOTE_PATH}}/$(basename $f)"
+        done

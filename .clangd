@@ -1,0 +1,8 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    # TI ARM Clang toolchain system headers (time.h, stdint.h, etc.)
+    - "-I/opt/ti/ti-cgt-armllvm_3.2.2.LTS/include/c"
+
+InlayHints:
+  Enabled: No

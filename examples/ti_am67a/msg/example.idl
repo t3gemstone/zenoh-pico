@@ -1,0 +1,52 @@
+module t3 {
+  module gemstone {
+    module example {
+
+      // 16-byte Zenoh session ID (mirrors z_id_t.id[16]).
+      // Note: z_node.c serializes this with ze_serializer_serialize_buf (length-prefixed
+      // raw bytes), not field-by-field. This struct is provided for cross-language type
+      // definitions; hand-coded buf serialization is needed for exact wire compatibility.
+      struct zid_t {
+        octet b00;
+        octet b01;
+        octet b02;
+        octet b03;
+        octet b04;
+        octet b05;
+        octet b06;
+        octet b07;
+        octet b08;
+        octet b09;
+        octet b10;
+        octet b11;
+        octet b12;
+        octet b13;
+        octet b14;
+        octet b15;
+      };
+
+      // Published once on startup (z_put) and returned by the /info queryable.
+      // Key expression : t3/nodes/<NODE_NAME>/info
+      // Encoding       : zenoh/serialized  (ze_serializer_t, little-endian)
+      // Wire order     : name, ip, fw, zid (buf), mode
+      struct node_info_t {
+        string name;    // node identifier  (NODE_NAME)
+        string ip;      // IPv4 dotted-decimal
+        string fw;      // firmware version  (NODE_FW_VER)
+        zid_t  zid;     // 16-byte zenoh session ID
+        string mode;    // "peer" or "client"
+      };
+
+      // Periodic heartbeat, published every STATUS_INTERVAL_MS milliseconds.
+      // Key expression : t3/nodes/<NODE_NAME>/status
+      // Encoding       : zenoh/serialized  (ze_serializer_t, little-endian)
+      // Wire order     : seq, uptime_s, heap_free
+      struct node_status_t {
+        uint32 seq;        // monotonically increasing publication counter
+        uint32 uptime_s;   // seconds since FreeRTOS scheduler start
+        uint32 heap_free;  // free FreeRTOS heap in bytes at publish time
+      };
+
+    };
+  };
+};

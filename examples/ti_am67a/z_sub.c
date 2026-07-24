@@ -7,36 +7,45 @@
  * z_sub — zenoh-pico subscriber example for TI AM67A Cortex-R5F.
  *
  * Subscribes to "t3/pub/**" and prints each received sample via DebugP_log.
- * Uses peer mode over UDP multicast (224.0.0.224:7446).
  *
- * Build prerequisites: see z_pub/main.c header.
+ * Session mode is selected at compile time via CLIENT_OR_PEER:
+ *   0 = client  → connects to a zenoh router at ZENOH_LOCATOR (TCP/UDP unicast)
+ *   1 = peer    → UDP multicast, no router needed (DEFAULT)
  */
 
 #include <stdint.h>
 #include <string.h>
 
-/* TI MCU+ SDK — SysConfig-generated (must exist in syscfg/) */
 #include "ti_drivers_config.h"
 #include "ti_drivers_open_close.h"
 #include "ti_board_config.h"
 #include "ti_board_open_close.h"
 
-/* TI DPL */
 #include <kernel/dpl/DebugP.h>
 
-/* FreeRTOS */
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* zenoh-pico */
 #include <zenoh-pico.h>
-
-/* Example network init */
 #include "zenoh_net_init.h"
 
+/* ---- Session mode ---------------------------------------------------------
+ * CLIENT_OR_PEER  0 = client (connects to router via TCP/UDP unicast)
+ *                 1 = peer   (UDP multicast, no router needed) — DEFAULT
+ */
+#define CLIENT_OR_PEER  1
+#if CLIENT_OR_PEER == 0
+#define ZENOH_MODE     "client"
+#define ZENOH_LOCATOR  "tcp/192.168.1.100:7447"
+#elif CLIENT_OR_PEER == 1
+#define ZENOH_MODE     "peer"
+#define ZENOH_LOCATOR  "udp/224.0.0.224:7446"
+#else
+#error "CLIENT_OR_PEER must be 0 (client) or 1 (peer)"
+#endif
+
 /* ---- Configuration -------------------------------------------------------- */
-#define SUB_KEYEXPR       "t3/pub/**"
-#define SUB_MULTICAST_EP  "udp/224.0.0.224:7446"
+#define SUB_KEYEXPR  "t3/pub/**"
 
 /* ---- FreeRTOS task parameters --------------------------------------------- */
 #define APP_TASK_NAME  "z_sub"
@@ -73,7 +82,6 @@ static void sample_handler(z_loaned_sample_t *sample, void *ctx) {
 static void z_sub_task(void *arg) {
     (void)arg;
 
-    /* 1. Bring up the network */
     int net_rc = zenoh_net_init();
     if (net_rc != ZENOH_NET_OK) {
         DebugP_log("[z_sub] Network init failed (%d)\r\n", net_rc);
@@ -83,15 +91,18 @@ static void z_sub_task(void *arg) {
 
     char ip_str[16];
     zenoh_net_ip_str(ip_str, sizeof(ip_str));
-    DebugP_log("[z_sub] IP: %s  keyexpr: %s\r\n", ip_str, SUB_KEYEXPR);
+    DebugP_log("[z_sub] IP: %s  mode: %s  keyexpr: %s\r\n",
+               ip_str, ZENOH_MODE, SUB_KEYEXPR);
 
-    /* 2. Configure zenoh session — peer mode, UDP multicast */
     z_owned_config_t cfg;
     z_config_default(&cfg);
-    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_MODE_KEY, "peer");
-    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_LISTEN_KEY, SUB_MULTICAST_EP);
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_MODE_KEY, ZENOH_MODE);
+#if CLIENT_OR_PEER == 0
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_CONNECT_KEY, ZENOH_LOCATOR);
+#else
+    zp_config_insert(z_loan_mut(cfg), Z_CONFIG_LISTEN_KEY, ZENOH_LOCATOR);
+#endif
 
-    /* 3. Open session */
     z_owned_session_t s;
     if (z_open(&s, z_move(cfg), NULL) < 0) {
         DebugP_log("[z_sub] z_open failed\r\n");
@@ -99,7 +110,6 @@ static void z_sub_task(void *arg) {
         return;
     }
 
-    /* 4. Start background read / lease tasks */
     if (zp_start_read_task(z_loan_mut(s), NULL) < 0 ||
         zp_start_lease_task(z_loan_mut(s), NULL) < 0) {
         DebugP_log("[z_sub] Failed to start background tasks\r\n");
@@ -108,7 +118,6 @@ static void z_sub_task(void *arg) {
         return;
     }
 
-    /* 5. Declare subscriber */
     z_owned_subscriber_t sub;
     z_owned_closure_sample_t cb;
     z_closure(&cb, sample_handler, NULL, NULL);
@@ -124,12 +133,10 @@ static void z_sub_task(void *arg) {
 
     DebugP_log("[z_sub] Waiting for data on '%s'...\r\n", SUB_KEYEXPR);
 
-    /* 6. Spin — incoming samples are delivered by the read task */
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000U));
     }
 
-    /* Unreachable */
     z_drop(z_move(sub));
     zp_stop_read_task(z_loan_mut(s));
     zp_stop_lease_task(z_loan_mut(s));
@@ -141,24 +148,19 @@ static void z_sub_task(void *arg) {
 /* ---- FreeRTOS entry ------------------------------------------------------- */
 void freertos_main(void *arg) {
     (void)arg;
-
     Drivers_open();
     Board_driversOpen();
-
     xTaskCreateStatic(z_sub_task, APP_TASK_NAME, APP_TASK_STACK,
                       NULL, APP_TASK_PRI, gAppTaskStack, &gAppTaskObj);
-
     vTaskDelete(NULL);
 }
 
 int main(void) {
     System_init();
     Board_init();
-
     xTaskCreateStatic(freertos_main, "freertos_main", MAIN_TASK_STACK,
                       NULL, configMAX_PRIORITIES - 1,
                       gMainTaskStack, &gMainTaskObj);
-
     vTaskStartScheduler();
     DebugP_assertNoLog(0);
     return 0;
